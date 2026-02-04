@@ -23,6 +23,7 @@ The sample Mac app has much of the functionality of MacOS' Terminal.app, but wit
 * Reusable and pluggable engine allows multiple user interfaces to be built on
   top of it.
 * Selection engine (with macOS support in the view)
+* Search support with a built-in macOS find bar and programmable search APIs
 * Supports colors (ANSI, 256, TrueColor)
 * Supports text attributes including bold, italic, underline, strikethrough, and dim/faint (SGR 2)
 * Supports mouse events
@@ -63,6 +64,21 @@ a common scenario will be to run local commands, given that iOS does
 not offer access to processes, the most common scenario will be to
 wire up this terminal to a remote host.  And the safest way of
 connecting to a remote system is with SSH.
+
+## Search
+
+On macOS, `TerminalView` includes a built-in find bar that integrates with the standard
+`Edit > Find` menu (for example `Cmd-F`, Next, Previous, and “Use Selection for Find”).
+
+If you want to supply your own search UI, call the public ``TerminalView`` helpers:
+
+```swift
+terminalView.findNext("term")
+terminalView.findPrevious("term", options: SearchOptions(caseSensitive: true))
+terminalView.clearSearch()
+```
+
+You can toggle regex and whole-word matching via ``SearchOptions``.
 
 
 <!--@START_MENU_TOKEN@-->Text<!--@END_MENU_TOKEN@-->

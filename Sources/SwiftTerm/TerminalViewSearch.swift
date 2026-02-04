@@ -9,6 +9,12 @@
 import Foundation
 
 extension TerminalView {
+    /// Finds the next match for `term`, selects it, and optionally scrolls it into view.
+    /// - Parameters:
+    ///   - term: The search term.
+    ///   - options: Search options (case sensitivity, regex, whole word).
+    ///   - scrollToResult: Whether to scroll the result into view.
+    /// - Returns: `true` if a match was found.
     @discardableResult
     public func findNext (_ term: String, options: SearchOptions = SearchOptions(), scrollToResult: Bool = true) -> Bool {
         guard let search = search, let selection = selection else {
@@ -25,6 +31,12 @@ extension TerminalView {
     }
 
     @discardableResult
+    /// Finds the previous match for `term`, selects it, and optionally scrolls it into view.
+    /// - Parameters:
+    ///   - term: The search term.
+    ///   - options: Search options (case sensitivity, regex, whole word).
+    ///   - scrollToResult: Whether to scroll the result into view.
+    /// - Returns: `true` if a match was found.
     public func findPrevious (_ term: String, options: SearchOptions = SearchOptions(), scrollToResult: Bool = true) -> Bool {
         guard let search = search, let selection = selection else {
             return false
@@ -39,6 +51,7 @@ extension TerminalView {
         return false
     }
 
+    /// Clears the current search state and selection.
     public func clearSearch () {
         search?.reset()
         selection?.selectNone()
