@@ -548,6 +548,71 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return cd.getPayload()
     }
 
+    func wrappedLineRange(containing row: Int, in buffer: Buffer) -> ClosedRange<Int>?
+    {
+        guard row >= 0, row < buffer.lines.count else {
+            return nil
+        }
+
+        var start = row
+        while start > 0 && buffer.lines[start].isWrapped {
+            start -= 1
+        }
+
+        var end = start
+        while end + 1 < buffer.lines.count && buffer.lines[end + 1].isWrapped {
+            end += 1
+        }
+
+        return start...end
+    }
+
+    func renderedLineTextAndOffsets(row: Int, wrappedEnd: Int, in buffer: Buffer) -> (text: String, utf16Offsets: [Int])
+    {
+        let line = buffer.lines[row]
+        let lineWrapsToNext = row < wrappedEnd
+        let trimRight = !lineWrapsToNext
+        let limit = trimRight ? min(buffer.cols, line.getTrimmedLength()) : buffer.cols
+
+        var text = ""
+        var utf16Offsets = Array(repeating: 0, count: buffer.cols + 1)
+
+        for col in 0..<buffer.cols {
+            utf16Offsets[col] = text.utf16.count
+            guard col < limit else {
+                continue
+            }
+
+            let cell = line[col]
+            // Skip synthetic trailing cell for wide glyphs.
+            if col > 0 && cell.code == 0 && line[col - 1].width == 2 {
+                continue
+            }
+
+            let ch = terminal.getCharacter(for: cell)
+            text.append(ch == "\u{0}" ? " " : ch)
+        }
+        utf16Offsets[buffer.cols] = text.utf16.count
+
+        if lineWrapsToNext {
+            let nextLine = buffer.lines[row + 1]
+            let lastIndex = max(line.count - 1, 0)
+            let lastCell = line[lastIndex]
+            let lastCellIsNull = lastCell.code == 0 && lastCell.width <= 1
+            if lastCellIsNull && nextLine.getWidth(index: 0) == 2 && !text.isEmpty {
+                text.removeLast()
+                let newLength = text.utf16.count
+                for idx in 0...buffer.cols {
+                    if utf16Offsets[idx] > newLength {
+                        utf16Offsets[idx] = newLength
+                    }
+                }
+            }
+        }
+
+        return (text, utf16Offsets)
+    }
+
     func detectPlainURL (at grid: Position) -> String?
     {
         guard let detector = Self.plainURLDetector else {
@@ -559,38 +624,37 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
               displayBuffer.cols > 0 else {
             return nil
         }
-        let line = displayBuffer.lines[grid.row]
-        var text = ""
-        var utf16OffsetForCol = Array(repeating: 0, count: displayBuffer.cols + 1)
-
-        for col in 0..<displayBuffer.cols {
-            utf16OffsetForCol[col] = text.utf16.count
-            let ch = line[col]
-
-            // Skip synthetic trailing cell for wide glyphs to keep indices aligned.
-            if ch.code == 0 && col > 0 && line[col - 1].width == 2 {
-                continue
-            }
-
-            let character = ch.code == 0 ? " " : String(terminal.getCharacter(for: ch))
-            text.append(contentsOf: character)
+        guard let wrappedRange = wrappedLineRange(containing: grid.row, in: displayBuffer) else {
+            return nil
         }
-        utf16OffsetForCol[displayBuffer.cols] = text.utf16.count
+
+        var text = ""
+        var tappedUtf16Index = 0
+        let tappedCol = min(max(grid.col, 0), displayBuffer.cols - 1)
+
+        for row in wrappedRange {
+            let lineStart = text.utf16.count
+            let rendered = renderedLineTextAndOffsets(row: row, wrappedEnd: wrappedRange.upperBound, in: displayBuffer)
+            if row == grid.row {
+                let colOffset = min(rendered.utf16Offsets[tappedCol], rendered.text.utf16.count)
+                tappedUtf16Index = lineStart + colOffset
+            }
+            text.append(contentsOf: rendered.text)
+        }
 
         let nsText = text as NSString
         guard nsText.length > 0 else {
             return nil
         }
 
-        let col = min(max(grid.col, 0), displayBuffer.cols - 1)
-        let tappedUtf16Index = min(utf16OffsetForCol[col], nsText.length)
+        let tappedIndex = min(max(tappedUtf16Index, 0), nsText.length)
         let fullRange = NSRange(location: 0, length: nsText.length)
         for match in detector.matches(in: text, options: [], range: fullRange) {
             guard match.resultType == .link else {
                 continue
             }
             let matchEnd = match.range.location + match.range.length
-            if tappedUtf16Index >= match.range.location && tappedUtf16Index <= matchEnd {
+            if tappedIndex >= match.range.location && tappedIndex <= matchEnd {
                 if let url = match.url?.absoluteString {
                     return url
                 }
