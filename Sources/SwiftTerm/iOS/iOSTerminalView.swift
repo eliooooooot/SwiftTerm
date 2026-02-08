@@ -52,6 +52,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public static var textInputDebugEnabled: Bool = false
     internal static var textInputLogCounter: Int = 0
     private static let plainURLDetector: NSDataDetector? = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+    private static let urlContinuationCharacterSet = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:/?#[]@!$&'()*+,;=%")
 
     struct FontSet {
         public let normal: UIFont
@@ -613,6 +614,62 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return (text, utf16Offsets)
     }
 
+    func leadingURLContinuationSegment(in rawLine: String) -> (segment: String, consumedAllNonWhitespace: Bool)
+    {
+        let trimmed = rawLine.drop { $0 == " " || $0 == "\t" }
+        guard !trimmed.isEmpty else {
+            return ("", false)
+        }
+
+        var end = trimmed.startIndex
+        while end < trimmed.endIndex {
+            let ch = trimmed[end]
+            if ch == "\u{0}" {
+                break
+            }
+            guard let scalar = ch.unicodeScalars.first,
+                  Self.urlContinuationCharacterSet.contains(scalar) else {
+                break
+            }
+            end = trimmed.index(after: end)
+        }
+
+        let segment = String(trimmed[..<end])
+        let remainder = trimmed[end...]
+        let consumedAllNonWhitespace = remainder.allSatisfy { $0 == " " || $0 == "\t" || $0 == "\u{0}" }
+        return (segment, consumedAllNonWhitespace)
+    }
+
+    func extendURLAcrossFollowingLines(_ baseURL: String, afterRow row: Int, in buffer: Buffer) -> String
+    {
+        guard !baseURL.isEmpty else {
+            return baseURL
+        }
+
+        var result = baseURL
+        let maxRowsToInspect = 8
+        let upperRow = min(buffer.lines.count - 1, row + maxRowsToInspect)
+
+        if row + 1 > upperRow {
+            return result
+        }
+
+        for nextRow in (row + 1)...upperRow {
+            let nextWrapEnd = (nextRow + 1 < buffer.lines.count && buffer.lines[nextRow + 1].isWrapped) ? (nextRow + 1) : nextRow
+            let rendered = renderedLineTextAndOffsets(row: nextRow, wrappedEnd: nextWrapEnd, in: buffer).text
+            let (segment, consumedAll) = leadingURLContinuationSegment(in: rendered)
+            if segment.isEmpty {
+                break
+            }
+            result.append(contentsOf: segment)
+            if !consumedAll {
+                break
+            }
+        }
+
+        return result
+    }
+
     func detectPlainURL (at grid: Position) -> String?
     {
         guard let detector = Self.plainURLDetector else {
@@ -655,10 +712,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             let matchEnd = match.range.location + match.range.length
             if tappedIndex >= match.range.location && tappedIndex <= matchEnd {
-                if let url = match.url?.absoluteString {
-                    return url
+                var linkText = nsText.substring(with: match.range)
+                if matchEnd >= nsText.length {
+                    linkText = extendURLAcrossFollowingLines(linkText, afterRow: wrappedRange.upperBound, in: displayBuffer)
                 }
-                return nsText.substring(with: match.range)
+                if !linkText.isEmpty {
+                    return linkText
+                }
+                return match.url?.absoluteString
             }
         }
         return nil
