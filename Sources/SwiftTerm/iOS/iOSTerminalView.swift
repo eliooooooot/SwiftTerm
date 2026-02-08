@@ -646,15 +646,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return baseURL
         }
 
+        let maxContinuationLength = 16_384
         var result = baseURL
-        let maxRowsToInspect = 8
-        let upperRow = min(buffer.lines.count - 1, row + maxRowsToInspect)
-
-        if row + 1 > upperRow {
+        if row + 1 >= buffer.lines.count {
             return result
         }
 
-        for nextRow in (row + 1)...upperRow {
+        for nextRow in (row + 1)..<buffer.lines.count {
             let nextWrapEnd = (nextRow + 1 < buffer.lines.count && buffer.lines[nextRow + 1].isWrapped) ? (nextRow + 1) : nextRow
             let rendered = renderedLineTextAndOffsets(row: nextRow, wrappedEnd: nextWrapEnd, in: buffer).text
             let (segment, consumedAll) = leadingURLContinuationSegment(in: rendered)
@@ -662,6 +660,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 break
             }
             result.append(contentsOf: segment)
+            if result.count >= maxContinuationLength {
+                break
+            }
             if !consumedAll {
                 break
             }
