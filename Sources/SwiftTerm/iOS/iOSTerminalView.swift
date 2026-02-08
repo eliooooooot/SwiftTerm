@@ -51,6 +51,7 @@ public extension Notification.Name {
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate {
     public static var textInputDebugEnabled: Bool = false
     internal static var textInputLogCounter: Int = 0
+    private static let plainURLDetector: NSDataDetector? = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 
     struct FontSet {
         public let normal: UIFont
@@ -516,6 +517,106 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return (Position(col: min (max (0, col), terminal.cols-1), row: row), toInt (point))
     }
 
+    // The payload is expected to be in "params;URL" format for OSC 8 hyperlinks.
+    func urlAndParamsFrom (payload: String) -> (String, [String:String])?
+    {
+        let split = payload.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
+        guard split.count > 1 else {
+            return nil
+        }
+        let pairs = split [0].split (separator: ":")
+        var params: [String:String] = [:]
+        for p in pairs {
+            let kv = p.split (separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            if kv.count == 2 {
+                params [String (kv [0])] = String (kv[1])
+            }
+        }
+        return (String (split [1]), params)
+    }
+
+    func getPayload (at grid: Position) -> Any?
+    {
+        let displayBuffer = terminal.displayBuffer
+        guard grid.row >= 0,
+              grid.row < displayBuffer.lines.count,
+              grid.col >= 0,
+              grid.col < displayBuffer.cols else {
+            return nil
+        }
+        let cd = displayBuffer.lines [grid.row][grid.col]
+        return cd.getPayload()
+    }
+
+    func detectPlainURL (at grid: Position) -> String?
+    {
+        guard let detector = Self.plainURLDetector else {
+            return nil
+        }
+        let displayBuffer = terminal.displayBuffer
+        guard grid.row >= 0,
+              grid.row < displayBuffer.lines.count,
+              displayBuffer.cols > 0 else {
+            return nil
+        }
+        let line = displayBuffer.lines[grid.row]
+        var text = ""
+        var utf16OffsetForCol = Array(repeating: 0, count: displayBuffer.cols + 1)
+
+        for col in 0..<displayBuffer.cols {
+            utf16OffsetForCol[col] = text.utf16.count
+            let ch = line[col]
+
+            // Skip synthetic trailing cell for wide glyphs to keep indices aligned.
+            if ch.code == 0 && col > 0 && line[col - 1].width == 2 {
+                continue
+            }
+
+            let character = ch.code == 0 ? " " : String(terminal.getCharacter(for: ch))
+            text.append(contentsOf: character)
+        }
+        utf16OffsetForCol[displayBuffer.cols] = text.utf16.count
+
+        let nsText = text as NSString
+        guard nsText.length > 0 else {
+            return nil
+        }
+
+        let col = min(max(grid.col, 0), displayBuffer.cols - 1)
+        let tappedUtf16Index = min(utf16OffsetForCol[col], nsText.length)
+        let fullRange = NSRange(location: 0, length: nsText.length)
+        for match in detector.matches(in: text, options: [], range: fullRange) {
+            guard match.resultType == .link else {
+                continue
+            }
+            let matchEnd = match.range.location + match.range.length
+            if tappedUtf16Index >= match.range.location && tappedUtf16Index <= matchEnd {
+                if let url = match.url?.absoluteString {
+                    return url
+                }
+                return nsText.substring(with: match.range)
+            }
+        }
+        return nil
+    }
+
+    @discardableResult
+    func tryOpenLinkForTap (_ gestureRecognizer: UITapGestureRecognizer) -> Bool
+    {
+        let hit = calculateTapHit(gesture: gestureRecognizer).grid
+        if let payload = getPayload(at: hit) as? String,
+           let (url, params) = urlAndParamsFrom(payload: payload) {
+            terminalDelegate?.requestOpenLink(source: self, link: url, params: params)
+            return true
+        }
+
+        if let plainURL = detectPlainURL(at: hit) {
+            terminalDelegate?.requestOpenLink(source: self, link: plainURL, params: [:])
+            return true
+        }
+        return false
+    }
+
     func encodeFlags (release: Bool) -> Int
     {
         let encodedFlags = terminal.encodeButton(
@@ -554,13 +655,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
+        guard gestureRecognizer.view != nil else { return }
+        if gestureRecognizer.state != .ended {
+            return
+        }
+
+        if (terminal.mouseMode == .off || !allowMouseReporting) && tryOpenLinkForTap(gestureRecognizer) {
+            return
+        }
+
         if isFirstResponder {
-            guard gestureRecognizer.view != nil else { return }
-                 
-            if gestureRecognizer.state != .ended {
-                return
-            }
-            
             if allowMouseReporting && terminal.mouseMode.sendButtonPress() {
                 sharedMouseEvent(gestureRecognizer: gestureRecognizer, release: false)
 

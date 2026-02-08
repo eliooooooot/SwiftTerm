@@ -76,6 +76,7 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     
     @objc func esc (_ sender: AnyObject) { clickAndSend ([0x1b]) }
     @objc func tab (_ sender: AnyObject) { clickAndSend ([0x9]) }
+    @objc func enter (_ sender: AnyObject) { clickAndInsertText ("\n") }
     @objc func tilde (_ sender: AnyObject) { clickAndInsertText ("~") }
     @objc func pipe (_ sender: AnyObject) { clickAndInsertText ("|") }
     @objc func slash (_ sender: AnyObject) { clickAndInsertText ("/") }
@@ -195,108 +196,18 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         rightViews = []
         floatViews = []
         terminalView?.setupKeyboardButtonColors ()
-        let useSmall = self._useSmall
-        if useSmall {
-            leftViews.append(makeButton("", #selector(esc), icon: "escape", isNormal: false))
-            let controlButton = makeButton("", #selector(ctrl), icon: "control", isNormal: false)
-            leftViews.append(controlButton)
-            self.controlButton = controlButton
-            leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact"))
-        } else {
-            leftViews.append(makeButton ("esc", #selector(esc), isNormal: false))
-            let controlButton = makeButton ("ctrl", #selector(ctrl), isNormal: false)
-            leftViews.append(controlButton)
-            self.controlButton = controlButton
-            leftViews.append(makeButton("", #selector(tab), icon: "arrow.right.to.line.compact", isNormal: false))
-            //leftViews.append(makeButton ("tab", #selector(tab)))
-        }
-        rightViews.append(makeAutoRepeatButton ("arrow.left", #selector(left)))
-        rightViews.append(makeAutoRepeatButton ("arrow.down", #selector(down)))
-        rightViews.append(makeAutoRepeatButton ("arrow.up", #selector(up)))
-        rightViews.append(makeAutoRepeatButton ("arrow.right", #selector(right)))
-        touchButton = makeButton ("", #selector(toggleTouch), icon: "hand.draw", isNormal: false)
-        touchButton.isSelected = terminalView?.allowMouseReporting ?? false
-        rightViews.append (touchButton)
-        keyboardButton = makeButton ("", #selector(toggleInputKeyboard), icon: "keyboard.chevron.compact.down", isNormal: false)
-        rightViews.append (keyboardButton)
+        self.controlButton = nil
 
-        // calculate aditional space we can give to keys we want to be bigger (all top level except function keys)
-        let minWidth: CGFloat = useSmall ? 20.0 : (UIDevice.current.userInterfaceIdiom == .phone) ? 22 : 32
-        let maxFuncKeyWidth = (minWidth + buttonPad) * 10
-        let importantKeysCount: Double = useSmall ? 11 : 13
-        let maxSpaceForImportantKeys = frame.width - maxFuncKeyWidth - buttonPad
-        var aditionalSpaceForImportantKeys: CGFloat = 0
-        if maxSpaceForImportantKeys > 0 {
-            aditionalSpaceForImportantKeys =  maxSpaceForImportantKeys / importantKeysCount
+        let enterButton = makeButton("enter", #selector(enter), isNormal: false)
+        enterButton.sizeToFit()
+        let minWidth: CGFloat = _useSmall ? 44 : 56
+        if enterButton.frame.width < minWidth {
+            enterButton.frame = CGRect(
+                origin: CGPoint.zero,
+                size: CGSize(width: minWidth, height: frame.height - 8)
+            )
         }
-        func setMinWidth (_ view: UIView, isImportantKey: Bool = false) {
-            view.sizeToFit()
-            if useSmall {
-                view.frame = CGRect (origin: CGPoint.zero, size: CGSize (width: 20, height: view.frame.height))
-            }
-            var calculatedMinWidth = minWidth
-            
-            // if key we want to be bigger calculate bigger width
-            if isImportantKey {
-                calculatedMinWidth = max(aditionalSpaceForImportantKeys, minWidth)
-            }
-          
-            if view.frame.width < calculatedMinWidth {
-                let r = CGRect (origin: view.frame.origin, size: CGSize (width: calculatedMinWidth, height: frame.height-8))
-                view.frame = r
-            }
-        }
-        
-        func buttonizeView (_ view: UIView, isImportantKey: Bool = false) {
-            setMinWidth (view, isImportantKey: isImportantKey)
-        }
-        leftViews.forEach { buttonizeView($0, isImportantKey: true) }
-        rightViews.forEach { buttonizeView($0, isImportantKey: true) }
-        let fixedUsedSpace = (leftViews + rightViews).reduce(0) { $0 + $1.frame.width + buttonPad }
-
-        if useSmall && false {
-            floatViews.append (makeDouble ("~", "|"))
-            floatViews.append (makeDouble ("/", "-"))
-        } else {
-            floatViews.append(makeButton ("~", #selector(tilde)))
-            floatViews.append(makeButton ("|", #selector(pipe)))
-            floatViews.append(makeButton ("/", #selector(slash)))
-            floatViews.append(makeButton ("-", #selector(dash)))
-        }
-        floatViews.forEach {
-            setMinWidth ($0, isImportantKey: true)
-        }
-        let usedSpace = (floatViews).reduce(fixedUsedSpace) { $0 + $1.frame.width + buttonPad }
-        var additionalUsedSpaceToAdd = 0.0
-        
-        if UIDevice.current.userInterfaceIdiom == .phone && frame.width > 500 {
-            additionalUsedSpaceToAdd = 50.0
-        }
-        var left = frame.width - usedSpace - additionalUsedSpaceToAdd
-        func addOptional (_ text: String, _ selector: Selector) {
-            left -= minWidth + buttonPad
-            
-            if left > 0 {
-                floatViews.append(makeButton(text, selector))
-            }
-        }
-        addOptional("F1", #selector(f1))
-        addOptional("F2", #selector(f2))
-        addOptional("F3", #selector(f3))
-        addOptional("F4", #selector(f4))
-        addOptional("F5", #selector(f5))
-        addOptional("F6", #selector(f6))
-        addOptional("F7", #selector(f7))
-        addOptional("F8", #selector(f8))
-        addOptional("F9", #selector(f9))
-        addOptional("F10", #selector(f10))
-        let smallerFloatViews = useSmall ? floatViews.suffix(floatViews.count - 2) : floatViews.suffix(floatViews.count - 4)
-        smallerFloatViews.forEach {
-            setMinWidth($0)
-        }
-
-        views.append(contentsOf: leftViews)
-        views.append(contentsOf: floatViews)
+        rightViews.append(enterButton)
         views.append(contentsOf: rightViews)
         
 
